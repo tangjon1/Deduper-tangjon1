@@ -147,6 +147,8 @@ def build_valid_umi_set(umi_filepath: str) -> set[str]:
 
 def calc_hamming_dist(string_1: str, string_2: str) -> int | None:
     '''Calculate the Hamming distance between two strings. Returns None if the strings are not equal length.'''
+    if len(string_1) != len(string_2):
+        return None
     dist = 0
     for i in range(len(string_1)):
         dist += string_1[i] != string_2[i]
