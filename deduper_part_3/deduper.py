@@ -8,6 +8,9 @@ from io import TextIOWrapper
 # For median function
 from statistics import median
 
+# For printing file names
+import os
+
 # Establish the CIGAR operations that consume reference
 REF_CONS_CIG_OPS: set = {'M', 'D', 'N'}
 
@@ -27,25 +30,15 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('-o', '--outfile', help="Output path for resulting deduplicated SAM file", required=True)
     parser.add_argument('-u', '--umi', help="File containing UMI sequences, separated by newlines, to validate against")
 
-    # Unimplemented arguments
-    parser.add_argument('-c', '--correction', help="[UNIMPLEMENTED] The Hamming distance to use as an error correction threshold for UMI validation, where higher values are more lenient and lower values are more strict (with 0 requiring an exact match)", type=int, default=0)
+    # Other feature arguments
+    parser.add_argument('-c', '--correction', help="The Hamming distance to use as an error correction threshold for UMI validation, where higher values are more lenient and lower values are more strict (with 0 requiring an exact match)", type=int, default=0)
     parser.add_argument('-r', '--represent', help="Determine how a read is selected for representation among duplicates", choices=['first', 'last', 'quality_mean', 'quality_median'], default='first')
-    
-    parser.add_argument('-s', '--force-single', help="Force the program to interpret reads as single-end reads", action="store_true")
+
     return parser.parse_args()
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    '''TODO'''
-    if args.correction != 0:
-        raise argparse.ArgumentError(args.correction, "Error correction is unsupported; check the 'extra-features' branch!")
-    if args.represent != 'first':
-        raise argparse.ArgumentError(args.represent, "Selecting representatives other than the first encountered read is unsupported; check the 'extra-features' branch!")
-    if args.paired:
-        raise argparse.ArgumentError(args.paired, "Paired-end read deduplication is unsupported; check the 'extra-features' branch!")
-    if args.umi is None:
-        raise argparse.ArgumentError(args.umi, "Randomers are not supported and UMIs must be provided; check the 'extra-features' branch!")
-
+    '''Validate the user provided arguments, raising an error for invalid configurations.'''
     if args.umi is None and args.correction != 0:
             raise argparse.ArgumentError(args.correction, "Error correction can only be applied using known UMIs")
     if args.correction and args.correction < 0:
@@ -53,12 +46,12 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def qscore_none(*_) -> None:
-    '''TODO'''
+    '''Default behavior function when quality score is not being evaluated for deduplication.'''
     return None
 
 
 def qscore_mean(qscore_seq: str, phred_offset: int=33) -> float | None:
-    '''TODO'''
+    '''Get the mean quality score value of a quality score sequence.'''
     if qscore_seq == '*':
         return None
     sum: int = 0
@@ -68,7 +61,7 @@ def qscore_mean(qscore_seq: str, phred_offset: int=33) -> float | None:
 
 
 def qscore_median(qscore_seq: str, phred_offset: int=33) -> float | None:
-    '''TODO'''
+    '''Get the median quality score value of a quality score sequence.'''
     if qscore_seq == '*':
         return None
     qscore_vals: list[int] = []
@@ -152,9 +145,27 @@ def build_valid_umi_set(umi_filepath: str) -> set[str]:
     return valid_umis
 
 
-def get_nearest_valid_umi(umi: str, error_correction: int, valid_umis: set[str] | None) -> str | None:
-    '''TODO'''
-    raise NotImplementedError
+def calc_hamming_dist(string_1: str, string_2: str) -> int | None:
+    '''Calculate the Hamming distance between two strings. Returns None if the strings are not equal length.'''
+    dist = 0
+    for i in range(len(string_1)):
+        dist += string_1[i] != string_2[i]
+    return dist
+        
+
+def get_nearest_valid_umi(umi: str, error_correction: int, valid_umis: set[str]) -> str | None:
+    '''
+    Takes a given (invalid) UMI, Hamming distance, and set of valid UMIs.
+    Returns the nearest UMI that is found to be within that distance (inclusive), or None if all are more distant.
+    '''
+    nearest_valid_umi: str | None = None
+    nearest_valid_umi_dist: int = error_correction + 1
+    for valid_umi in valid_umis:
+        dist = calc_hamming_dist(umi, valid_umi)
+        if dist is not None and dist < nearest_valid_umi_dist:
+            nearest_valid_umi = valid_umi
+            nearest_valid_umi_dist = dist
+    return nearest_valid_umi
 
 
 def get_umi(qname: str, error_correction: int, valid_umis: set[str] | None, second_read: bool | None=None) -> str | None:
@@ -181,7 +192,7 @@ def get_umi(qname: str, error_correction: int, valid_umis: set[str] | None, seco
 
 
 def get_five_prime_start(pos: int, cigar: tuple[tuple[str, int], ...], reverse_strand: bool) -> int:
-    '''TODO'''
+    '''Given POS, cigar, and strandedness, return the 5' start position.'''
     five_prime_softclip: int = get_five_prime_softclip(cigar, reverse_strand)
     if not reverse_strand:
         return pos - five_prime_softclip
@@ -230,7 +241,14 @@ def process_sam_record(sam_record: str, error_correction: int, valid_umis: set[s
 
 
 def main(args: argparse.Namespace) -> None:
-    '''TODO'''
+    '''
+    Main program logic.
+    Iterate through a SAM file processing each read into a tuple. Check if each tuple is unique within a set of seen tuples.
+    Write out the associated record of unique tuples to an output (deduplicated) SAM file.
+    '''
+    # Print the input file name
+    print(os.path.basename(args.file))
+
     # Get the maximum leftmost soft clipping value
     max_adj_pos_diff: int = get_file_max_five_prime_adjustment(args.file)
     print(f"max_adj_pos_diff\t{max_adj_pos_diff}")
@@ -256,11 +274,9 @@ def main(args: argparse.Namespace) -> None:
         qscore_method = qscore_mean
     elif args.represent == 'quality_median':
         qscore_method = qscore_median
-        
-    # Initialize the location (RNAME and adj. POS) to None
-    # adj. POS is POS offset by the maximum soft clipping value, for a "sliding window" (better memory efficiency)
-    current_reference = None
-    current_adj_pos = None
+
+    # Default to single-end
+    file_contains_paired = False
 
     # Track various stats about the deduplicated file
     stats: dict[str, int] = {
@@ -303,8 +319,9 @@ def main(args: argparse.Namespace) -> None:
             # For paired reads, check if the mate has already been found
             # If the mate has been found, construct the new read_to_check from the pair
             paired = sam_read[4] is not None
-            if paired and not args.force_single:
-                raise NotImplementedError("Paired end reads not yet supported")
+            if paired:
+                file_contains_paired = True
+                #raise NotImplementedError("Paired end reads not yet supported")
                 if qname in unique_mate_pair_qname:      
                     paired_sam_read: list[tuple[str, int, bool, str, bool | None] | None] = [None, None]
                     # This loop should only iterate once
@@ -335,13 +352,15 @@ def main(args: argparse.Namespace) -> None:
                         else:
                             new_sam_record: str = unique_mate_pair_qname[qname][sam_read_key][1] + '\n' + sam_record
 
-                        # Get the new sam read values from those of those of each read in the pair
+                        # Get the new sam read values from those of each read in the pair
                         sam_read_value = new_qscore, new_sam_record
 
                     # Free up memory since we do not expect that QNAME elsewhere in file after finding the mate
                     del unique_mate_pair_qname[qname]
                 else:
+                    # Track unpaired mates in the separate dictionary, and skip checking the read
                     unique_mate_pair_qname[qname] = {sam_read: (qscore, sam_record)}
+                    continue
 
             # Check that the read is unique by searching for it in the unique_reads dictionary
             if read_to_check in unique_reads:
@@ -371,13 +390,15 @@ def main(args: argparse.Namespace) -> None:
             current_window_min: int = sam_read[1] - (max_adj_pos_diff * 2)
 
             # Write the out-of-window SAM records to the file
-            for key in list(unique_reads.keys()):
+            # Mark these keys to remove from the dictionary (cannot change dict size while iterating through it)
+            keys_to_delete: list[tuple[tuple[str, int, bool, str, bool | None], ...]] = list()
+            for key in unique_reads:
                 key_reference = key[0][0]
                 key_adj_pos = key[0][1]
 
-                if current_reference != key_reference or key_adj_pos < current_window_min:
+                if current_reference != key_reference or (key_adj_pos < current_window_min and not file_contains_paired):
                     out_file.write(unique_reads[key][1] + '\n')
-                    del unique_reads[key]
+                    keys_to_delete.append(key)
 
                     # Track the number of total reads written, and per chromosome
                     stats['unique_reads'] += len(key)
@@ -386,23 +407,33 @@ def main(args: argparse.Namespace) -> None:
 
                 # Since dictionaries are ordered, assume that when we encounter a read within the window,
                 # all remaining reads should also be retained in the dictionary
-                elif current_reference == key_reference and key_adj_pos >= current_window_min:
+                else:
                     break
+
+            # Delete the marked keys
+            for key in keys_to_delete:
+                del unique_reads[key]
     
         # Dump remaining unique reads to output file
-        for key in list(unique_reads.keys()):
+        for key in unique_reads:
             key_reference = key[0][0]
-            key_adj_pos = key[0][1]
             out_file.write(unique_reads[key][1] + '\n')
             stats['unique_reads'] += len(key)
             rname_count.setdefault(key_reference, 0)
             rname_count[key_reference] += len(key)
+        
+        # Dump remaining unpaired mates to output file
+        for qname_key in unique_mate_pair_qname:
+            for sam_read_key in unique_mate_pair_qname[qname_key]:
+                sam_read_key_reference = sam_read_key[0]
+                out_file.write(unique_mate_pair_qname[qname_key][sam_read_key][1] + '\n')
+                stats['unique_reads'] += 1
+                rname_count.setdefault(sam_read_key_reference, 0)
+                rname_count[sam_read_key_reference] += 1
 
-    
     # Print stats to standard out
     for stat in stats:
         print(f"{stat}\t{stats[stat]}")
-
     for rname in rname_count:
         print(f"{rname}\t{rname_count[rname]}")
 
