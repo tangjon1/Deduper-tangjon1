@@ -40,7 +40,7 @@ def get_args() -> argparse.Namespace:
 def validate_args(args: argparse.Namespace) -> None:
     '''Validate the user provided arguments, raising an error for invalid configurations.'''
     if args.umi is None and args.correction != 0:
-            raise argparse.ArgumentError(args.correction, "Error correction can only be applied using known UMIs")
+        raise argparse.ArgumentError(args.correction, "Error correction can only be applied using known UMIs")
     if args.correction and args.correction < 0:
         raise argparse.ArgumentError(args.correction, "Error correction threshold cannot be less than 0")
 
