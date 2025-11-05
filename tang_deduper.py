@@ -28,11 +28,12 @@ def get_args() -> argparse.Namespace:
     # Standard deduplication arguments 
     parser.add_argument('-f', '--file', help="The input SAM file, with uniquely mapped reads to deduplicate, sorted by reference", required=True)
     parser.add_argument('-o', '--outfile', help="Output path for resulting deduplicated SAM file", required=True)
-    parser.add_argument('-u', '--umi', help="File containing UMI sequences, separated by newlines, to validate against")
+    parser.add_argument('-u', '--umi', help="File containing UMI sequences, separated by newlines, to validate against; if omitted, process UMIs as randomers")
 
     # Other feature arguments
     parser.add_argument('-c', '--correction', help="The Hamming distance to use as an error correction threshold for UMI validation, where higher values are more lenient and lower values are more strict (with 0 requiring an exact match)", type=int, default=0)
     parser.add_argument('-r', '--represent', help="Determine how a read is selected for representation among duplicates", choices=['first', 'last', 'quality_mean', 'quality_median'], default='first')
+    parser.add_argument('-w', '--window', help="Enable experimental window-based read checking, aiming to consume less memory. Not usable with paired end reads.", action='store_true')
 
     return parser.parse_args()
 
@@ -178,11 +179,11 @@ def get_umi(qname: str, error_correction: int, valid_umis: set[str] | None, seco
     '''
     umi_index = -1
     if second_read is not None:
-         umi_index -= (not second_read)
+        umi_index -= (not second_read)
     
     umi: str = qname.split(':')[umi_index]
 
-    if valid_umis:
+    if valid_umis is not None:
         if umi in valid_umis:
             return umi
         elif error_correction > 0:
@@ -252,8 +253,9 @@ def main(args: argparse.Namespace) -> None:
     print(os.path.basename(args.file))
 
     # Get the maximum leftmost soft clipping value
-    max_adj_pos_diff: int = get_file_max_five_prime_adjustment(args.file)
-    print(f"max_adj_pos_diff\t{max_adj_pos_diff}")
+    if args.window:
+        max_adj_pos_diff: int = get_file_max_five_prime_adjustment(args.file)
+        print(f"max_adj_pos_diff\t{max_adj_pos_diff}")
 
     # Build a set of valid UMIs
     valid_umis: set[str] = build_valid_umi_set(args.umi)
@@ -276,6 +278,9 @@ def main(args: argparse.Namespace) -> None:
         qscore_method = qscore_mean
     elif args.represent == 'quality_median':
         qscore_method = qscore_median
+
+    # Set the current reference
+    current_reference: None | str = None
 
     # Default to single-end
     file_contains_paired = False
@@ -386,36 +391,46 @@ def main(args: argparse.Namespace) -> None:
             else:
                 # If the read is not already found, add it to the dictionary
                 unique_reads[read_to_check] = sam_read_value
-            
-            # Update the location
-            current_reference = sam_read[0]
-            current_window_min: int = sam_read[1] - (max_adj_pos_diff * 2)
 
             # Write the out-of-window SAM records to the file
             # Mark these keys to remove from the dictionary (cannot change dict size while iterating through it)
-            keys_to_delete: list[tuple[tuple[str, int, bool, str, bool | None], ...]] = list()
-            for key in unique_reads:
-                key_reference = key[0][0]
-                key_adj_pos = key[0][1]
+            if args.window:
+                # Update the location
+                current_reference = sam_read[0]
+                current_window_min: int = sam_read[1] - (max_adj_pos_diff * 2)
+                keys_to_delete: list[tuple[tuple[str, int, bool, str, bool | None], ...]] = list()
+                for key in unique_reads:
+                    key_reference = key[0][0]
+                    key_adj_pos = key[0][1]
 
-                if current_reference != key_reference or (key_adj_pos < current_window_min and not file_contains_paired):
-                    out_file.write(unique_reads[key][1] + '\n')
-                    keys_to_delete.append(key)
+                    if current_reference != key_reference or (key_adj_pos < current_window_min and not file_contains_paired):
+                        out_file.write(unique_reads[key][1] + '\n')
+                        keys_to_delete.append(key)
 
-                    # Track the number of total reads written, and per chromosome
-                    stats['unique_reads'] += len(key)
-                    rname_count.setdefault(key_reference, 0)
-                    rname_count[key_reference] += len(key)
+                        # Track the number of total reads written, and per chromosome
+                        stats['unique_reads'] += len(key)
+                        rname_count.setdefault(key_reference, 0)
+                        rname_count[key_reference] += len(key)
 
-                # Since dictionaries are ordered, assume that when we encounter a read within the window,
-                # all remaining reads should also be retained in the dictionary
-                else:
-                    break
+                    # Since dictionaries are ordered, assume that when we encounter a read within the window,
+                    # all remaining reads should also be retained in the dictionary
+                    else:
+                        break
+                # Delete the marked keys
+                for key in keys_to_delete:
+                    del unique_reads[key]
+            else:
+                # The reference has changed, write all reads and clear the dictionary
+                if current_reference is not None and sam_read[0] != current_reference:
+                    for key in unique_reads:
+                        out_file.write(unique_reads[key][1] + '\n')
+                        stats['unique_reads'] += len(key)
+                        rname_count.setdefault(key[0][0], 0)
+                        rname_count[key[0][0]] += len(key)
+                    unique_reads.clear()
 
-            # Delete the marked keys
-            for key in keys_to_delete:
-                del unique_reads[key]
-    
+                current_reference = sam_read[0]
+            
         # Dump remaining unique reads to output file
         for key in unique_reads:
             key_reference = key[0][0]
