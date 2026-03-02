@@ -23,7 +23,7 @@ def open_read(file_path: str) -> IO[Any] | TextIOWrapper:
 
 
 def get_args() -> argparse.Namespace:
-    parser: argparse.ArgumentParser = argparse.ArgumentParser(description="Reference based deduplication to remove PCR duplicates from SAM files introduced by amplification bias")
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(description="Reference based deduplication to remove PCR duplicates from SAM files introduced by amplification bias", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     # Standard deduplication arguments 
     parser.add_argument('-f', '--file', help="The input SAM file, with uniquely mapped reads to deduplicate, sorted by reference", required=True)
