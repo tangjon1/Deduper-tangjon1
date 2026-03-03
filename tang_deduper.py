@@ -75,7 +75,8 @@ def import_cigar_string(cigar_string: str) -> tuple[tuple[str, int], ...]:
     '''
     Convert a CIGAR string into a Python-parsable format:
     A tuple that contains tuples of pairs of values, where the first value is the operation and the second value is its associated number of bases
-    Order is preserved from the original string. 
+    Order is preserved from the original string.
+    ex. 1S3M5S -> (('S', 1), ('M', 3), ('S', 5))
     '''
     cigar_seq: list[tuple[str, int]] = list()
     cigar_int: str = ""
@@ -89,7 +90,10 @@ def import_cigar_string(cigar_string: str) -> tuple[tuple[str, int], ...]:
 
 
 def get_five_prime_softclip(cigar: tuple[tuple[str, int], ...], reverse_strand: bool) -> int:
-    '''Get the number of 5' soft clipped bases from an imported CIGAR, given strandedness'''
+    '''
+    Get the number of 5' soft clipped bases from an imported CIGAR, given strandedness
+    ex. get_five_prime_softclip( (('S', 3), ('M', 5)), False) -> 3
+    '''
     # Ignore hard clipping
     hardclip_start: bool = cigar[0][0] == 'H'
     hardclip_end: bool = cigar[-1][0] == 'H'
@@ -129,7 +133,10 @@ def get_file_max_five_prime_adjustment(file: str) -> int:
 
 
 def get_cigar_ref_cons_length(cigar: tuple[tuple[str, int], ...]) -> int:
-    '''Get the sum of all reference-consuming operations of a cigar'''
+    '''
+    Get the sum of all reference-consuming operations of a cigar
+    ex. get_cigar_ref_cons_length( (('S', 3), ('M', 5)) ) -> 8
+    '''
     ref_cons_length: int = 0
     for operation in cigar:
         if operation[0] in REF_CONS_CIG_OPS:
@@ -147,7 +154,10 @@ def build_valid_umi_set(umi_filepath: str) -> set[str]:
 
 
 def calc_hamming_dist(string_1: str, string_2: str) -> int | None:
-    '''Calculate the Hamming distance between two strings. Returns None if the strings are not equal length.'''
+    '''
+    Calculate the Hamming distance between two strings. Returns None if the strings are not equal length.
+    ex. calc_hamming_dist('ATC', 'ATG') -> 1
+    '''
     if len(string_1) != len(string_2):
         return None
     dist = 0
