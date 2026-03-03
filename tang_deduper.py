@@ -379,29 +379,6 @@ def main(args: argparse.Namespace) -> None:
                     unique_mate_pair_qname[qname] = {sam_read: (qscore, sam_record)}
                     continue
 
-            # Check that the read is unique by searching for it in the unique_reads dictionary
-            if read_to_check in unique_reads:
-                # Track the number of discarded duplicates
-                stats['duplicates_removed'] += 1 + paired
-
-                # Check if the existing read needs to be updated according to the representation type...
-                # ...for 'last' represent
-                if args.represent == 'last':
-                    unique_reads[read_to_check] = sam_read_value
-
-                # ...for highest quality represent
-                if 'quality' in args.represent:
-                    prev_qscore = unique_reads[read_to_check][0]
-                    # Error if either qscore is None
-                    if prev_qscore is None or qscore is None:
-                        raise ValueError("Quality score metric should not be None for this representation type")
-                    if qscore > prev_qscore:
-                        unique_reads[read_to_check] = sam_read_value
-           
-            else:
-                # If the read is not already found, add it to the dictionary
-                unique_reads[read_to_check] = sam_read_value
-
             # Write the out-of-window SAM records to the file
             # Mark these keys to remove from the dictionary (cannot change dict size while iterating through it)
             if args.window:
@@ -441,6 +418,29 @@ def main(args: argparse.Namespace) -> None:
 
                 current_reference = sam_read[0]
             
+            # Check that the read is unique by searching for it in the unique_reads dictionary
+            if read_to_check in unique_reads:
+                # Track the number of discarded duplicates
+                stats['duplicates_removed'] += 1 + paired
+
+                # Check if the existing read needs to be updated according to the representation type...
+                # ...for 'last' represent
+                if args.represent == 'last':
+                    unique_reads[read_to_check] = sam_read_value
+
+                # ...for highest quality represent
+                if 'quality' in args.represent:
+                    prev_qscore = unique_reads[read_to_check][0]
+                    # Error if either qscore is None
+                    if prev_qscore is None or qscore is None:
+                        raise ValueError("Quality score metric should not be None for this representation type")
+                    if qscore > prev_qscore:
+                        unique_reads[read_to_check] = sam_read_value
+           
+            else:
+                # If the read is not already found, add it to the dictionary
+                unique_reads[read_to_check] = sam_read_value
+
         # Dump remaining unique reads to output file
         for key in unique_reads:
             key_reference = key[0][0]
